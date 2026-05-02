@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drone Swarm — Shamir Secret Sharing Auth</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+:root{
+  --bg:       #04080d;
+  --bg2:      #070e17;
+  --bg3:      #0b1622;
+  --border:   #12263a;
+  --borderB:  #1e3d5a;
+  --green:    #00ff88;
+  --greenD:   #00cc66;
+  --greenDim: #004422;
+  --red:      #ff2244;
+  --blue:     #0099ff;
+  --yellow:   #ffcc00;
+  --orange:   #ff8800;
+  --purple:   #bb44ff;
+  --cyan:     #00ddff;
+  --text:     #7aaccc;
+  --textB:    #c0ddf0;
+  --mono:     'Share Tech Mono','Courier New',monospace;
+  --hud:      'Orbitron','Courier New',monospace;
+}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--mono);
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  user-select:none;
+}
+
+body::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  background:repeating-linear-gradient(
+    0deg,transparent,transparent 2px,
+    rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px
+  );
+  pointer-events:none;
+  z-index:9999;
+}
+
+.header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 20px;
+  background:var(--bg2);
+  border-bottom:1px solid var(--borderB);
+  flex-shrink:0;
+  gap:16px;
+}
+.h-title{
+  font-family:var(--hud);font-size:13px;font-weight:900;
+  color:var(--green);letter-spacing:4px;
+  display:flex;align-items:center;gap:10px;
+}
+.h-title-icon{font-size:18px;}
+.h-status{display:flex;gap:18px;flex-wrap:wrap;font-size:10.5px;}
+.si{display:flex;align-items:center;gap:5px;}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1.8s infinite;}
+.dot.r{background:var(--red);box-shadow:0 0 6px var(--red);}
+.dot.y{background:var(--yellow);box-shadow:0 0 6px var(--yellow);}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+.sv{color:var(--textB);font-weight:bold;}
+
+.main{display:flex;flex:1;overflow:hidden;}
+
+.vp{flex:1;position:relative;overflow:hidden;cursor:grab;}
+.vp:active{cursor:grabbing;}
+#c{width:100%;height:100%;display:block;}
+
+.vp-hud{
+  position:absolute;top:12px;left:12px;
+  font-size:9.5px;color:var(--greenD);
+  line-height:1.7;opacity:.75;
+  pointer-events:none;
+}
+.vp-hud b{color:var(--green);}
+
+.legend{
+  position:absolute;bottom:12px;left:12px;
+  font-size:9px;color:var(--text);
+  line-height:1.9;pointer-events:none;
+  background:rgba(4,8,13,.7);
+  border:1px solid var(--border);
+  padding:6px 10px;border-radius:4px;
+}
+.leg-row{display:flex;align-items:center;gap:7px;}
+.leg-dot{width:9px;height:9px;border-radius:50%;}
+
+.log-panel{
+  width:400px;flex-shrink:0;
+  background:var(--bg2);
+  border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.log-hdr{
+  padding:8px 14px;
+  background:var(--bg3);
+  border-bottom:1px solid var(--border);
+  font-family:var(--hud);font-size:10px;letter-spacing:2px;
+  color:var(--green);
+  display:flex;justify-content:space-between;align-items:center;
+  flex-shrink:0;
+}
+.log-count{color:var(--text);font-size:9px;}
+.log-body{
+  flex:1;overflow-y:auto;
+  padding:8px 10px;
+  font-size:10px;line-height:1.55;
+}
+.log-body::-webkit-scrollbar{width:3px;}
+.log-body::-webkit-scrollbar-track{background:transparent;}
+.log-body::-webkit-scrollbar-thumb{background:var(--borderB);border-radius:2px;}
+
+.ll{margin-bottom:0px;word-break:break-all;font-family:var(--mono);}
+.lsep{border:none;border-top:1px solid #0d1f2e;margin:3px 0;}
+
+/* syslog colour classes */
+.lok {color:#00e87a;}   /* ok / pass */
+.lf  {color:#ff2244;}   /* fail / block */
+.lw  {color:#ff8800;}   /* warn */
+.li  {color:#5a8ca8;}   /* info / meta */
+.ld  {color:#00c8e8;}   /* data */
+.lk  {color:#bb44ff;}   /* key material */
+.ls  {color:#c0ddf0;font-weight:bold;}  /* section heading */
+.lts {color:#2a5a72;}   /* timestamp prefix */
+
+.ctrl{
+  padding:10px 16px;
+  background:var(--bg2);
+  border-top:1px solid var(--border);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  flex-shrink:0;
+}
+.btn{
+  padding:6px 15px;
+  border:1px solid currentColor;
+  background:transparent;
+  font-family:var(--mono);font-size:10px;
+  cursor:pointer;
+  transition:all .12s;
+  letter-spacing:1px;text-transform:uppercase;
+  border-radius:3px;
+}
+.btn:hover{filter:brightness(1.2);}
+.btn:active{transform:scale(.97);}
+.bg{color:var(--green);}  .bg:hover{background:rgba(0,255,136,.12);}
+.br{color:var(--red);}    .br:hover{background:rgba(255,34,68,.12);}
+.bo{color:var(--orange);} .bo:hover{background:rgba(255,136,0,.12);}
+.bb{color:var(--blue);}   .bb:hover{background:rgba(0,153,255,.12);}
+.csp{flex:1;}
+.abadge{
+  font-size:9.5px;padding:4px 11px;
+  border:1px solid var(--borderB);border-radius:3px;
+  color:var(--orange);font-family:var(--hud);letter-spacing:1px;
+  white-space:nowrap;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="h-title">
+    <span class="h-title-icon">⬡</span>
+    DRONE SWARM COMMAND
+  </div>
+  <div class="h-status">
+    <div class="si"><div class="dot"></div><span>LIVE</span></div>
+    <div class="si"><span>SWARM:</span><span class="sv" id="hDrones">5</span></div>
+    <div class="si"><span>LEADER:</span><span class="sv" id="hLeader">—</span></div>
+    <div class="si"><span>BLACKLIST:</span><span class="sv" id="hBlacklist" style="color:var(--red)">0</span></div>
+    <div class="si"><span>AUTH:</span><span class="sv" style="color:var(--green)">SSS K=3</span></div>
+    <div class="si"><span>PRIME:</span><span class="sv" style="color:var(--purple);font-size:9px">2¹²⁷−1</span></div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="vp" id="vp">
+    <canvas id="c"></canvas>
+    <div class="vp-hud">
+      <b>DRAG</b> to orbit &nbsp;|&nbsp; <b>SCROLL</b> to zoom<br>
+      SSS AUTHENTICATION SIM v2.1 — COLLISION AVOIDANCE ON
+    </div>
+    <div class="legend">
+      <div class="leg-row"><div class="leg-dot" style="background:#00ff88;box-shadow:0 0 5px #00ff88"></div> Authenticated drone</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#ffcc00;box-shadow:0 0 5px #ffcc00"></div> Swarm leader (max battery)</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#44ffaa;box-shadow:0 0 5px #44ffaa"></div> Newly joined drone</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#ff2244;box-shadow:0 0 5px #ff2244"></div> Rejected / fake drone</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#0099ff;box-shadow:0 0 5px #0099ff"></div> Base station</div>
+    </div>
+  </div>
+
+  <div class="log-panel">
+    <div class="log-hdr">
+      <span>◈ AUTH TERMINAL</span>
+      <span class="log-count" id="logCount">0 EVENTS</span>
+    </div>
+    <div class="log-body" id="logBody"></div>
+  </div>
+</div>
+
+<div class="ctrl">
+  <button class="btn bg" onclick="UI.addReal()">➕ ADD REAL DRONE</button>
+  <button class="btn br" onclick="UI.addFake()">💀 ADD FAKE DRONE</button>
+  <button class="btn bo" onclick="UI.cycleAttack()">⚙ CYCLE ATTACK TYPE</button>
+  <button class="btn bb" onclick="UI.removeDrone()">➖ REMOVE DRONE</button>
+  <div class="csp"></div>
+  <div class="abadge">ATTACK: <span id="atkLabel">INVALID_SIG</span></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+/* ─── TIMESTAMP ─── */
+function ts() {
+  const d = new Date();
+  return d.getHours().toString().padStart(2,'0') + ':' +
+         d.getMinutes().toString().padStart(2,'0') + ':' +
+         d.getSeconds().toString().padStart(2,'0') + '.' +
+         d.getMilliseconds().toString().padStart(3,'0');
+}
+
+/* ─── LOG ─── */
+const Log = (() => {
+  let count = 0;
+  const body = document.getElementById('logBody');
+  const cnt  = document.getElementById('logCount');
+  body.innerHTML = '';
+
+  function append(text, cls = 'li') {
+    if (cls === 'sep') {
+      const hr = document.createElement('hr'); hr.className='lsep'; body.appendChild(hr); return;
+    }
+    const d = document.createElement('div');
+    d.className = `ll ${cls}`;
+    // prefix all non-heading lines with a dim timestamp
+    if (cls !== 'ls') {
+      const stamp = document.createElement('span');
+      stamp.className = 'lts';
+      stamp.textContent = ts() + ' ';
+      d.appendChild(stamp);
+      d.appendChild(document.createTextNode(text));
+    } else {
+      d.textContent = text;
+    }
+    body.appendChild(d);
+    count++;
+    cnt.textContent = `${count} EVENTS`;
+    body.scrollTop = body.scrollHeight;
+  }
+  return { append };
+})();
+
+
+/* ─── SHAMIR SECRET SHARING  (BigInt / Mersenne prime 2¹²⁷−1) ─── */
+const SSS = (() => {
+  const P = (2n ** 127n) - 1n;
+
+  function modInv(a, mod) {
+    let [or, r] = [((a % mod) + mod) % mod, mod];
+    let [os, s] = [1n, 0n];
+    while (r !== 0n) {
+      const q = or / r;
+      [or, r] = [r, or - q * r];
+      [os, s] = [s, os - q * s];
+    }
+    return ((os % mod) + mod) % mod;
+  }
+
+  function modPow(base, exp, mod) {
+    let r = 1n; base = ((base % mod) + mod) % mod;
+    while (exp > 0n) { if (exp & 1n) r = r * base % mod; exp >>= 1n; base = base * base % mod; }
+    return r;
+  }
+
+  function randBig() {
+    const b = new Uint8Array(16); crypto.getRandomValues(b);
+    let v = 0n; for (const x of b) v = (v << 8n) | BigInt(x);
+    return v % P;
+  }
+
+  function generate(secret, k, n) {
+    const c = [secret];
+    for (let i = 1; i < k; i++) c.push(randBig());
+    const shares = [];
+    for (let x = 1; x <= n; x++) {
+      const xb = BigInt(x); let y = 0n;
+      for (let p = 0; p < c.length; p++) y = (y + c[p] * modPow(xb, BigInt(p), P)) % P;
+      shares.push([xb, y]);
+    }
+    return shares;
+  }
+
+  function reconstruct(shares) {
+    let secret = 0n;
+    for (let i = 0; i < shares.length; i++) {
+      const [xi, yi] = shares[i]; let num = 1n, den = 1n;
+      for (let j = 0; j < shares.length; j++) {
+        if (i === j) continue;
+        const [xj] = shares[j];
+        num = num * ((P - xj) % P) % P;
+        den = den * (((xi - xj) % P + P) % P) % P;
+      }
+      secret = (secret + yi * (num * modInv(den, P) % P)) % P;
+    }
+    return secret;
+  }
+
+  return { P, generate, reconstruct, randBig };
+})();
+
+
+/* ─── CRYPTO UTILS ─── */
+function hashStr(s) {
+  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+             0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    H[i%8]      = Math.imul(H[i%8]      ^ c, 0x9e3779b9) >>> 0;
+    H[(i+1)%8]  = Math.imul(H[(i+1)%8]  ^ H[i%8], 0x6c62272e) >>> 0;
+    H[(i+2)%8]  = (H[(i+2)%8] ^ (H[(i+3)%8] >>> 5 | H[(i+3)%8] << 27)) >>> 0;
+  }
+  for (let r = 0; r < 4; r++) {
+    H[r]   = Math.imul(H[r]   ^ H[r+4], 0x517cc1b7) >>> 0;
+    H[r+4] = Math.imul(H[r+4] ^ H[r],   0x27d4eb2f) >>> 0;
+  }
+  return H.map(n => n.toString(16).padStart(8,'0')).join('');
+}
+
+function randHex(n) {
+  const b = new Uint8Array(n); crypto.getRandomValues(b);
+  return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
+}
+
+
+/* ─── DRONE CREDENTIALS ─── */
+class DroneCredentials {
+  constructor(id, legit = true) {
+    this.droneId = id;
+    this.isLegitimate = legit;
+    this.privateKey = legit ? randHex(32) : 'FAKE_KEY_INVALID_' + randHex(7);
+    this.publicKey  = hashStr(this.privateKey);
+    const now = Date.now() / 1000;
+    this.certificate = {
+      droneId: id, publicKey: this.publicKey,
+      issuer: legit ? 'SwarmCA' : 'RogueCA',
+      validFrom: now - 86400,
+      validUntil: now + 86400 * 365,
+      isLegitimate: legit
+    };
+  }
+  sign(msg)        { return hashStr(this.privateKey + msg); }
+  verify(msg, sig) { return this.sign(msg) === sig; }
+}
+
+
+/* ─── SHAMIR AUTH MODULE ─── */
+class ShamirAuthModule {
+  constructor(k = 3) {
+    this.k = k;
+    this.masterSecret = SSS.randBig();
+    this.shares       = new Map();
+    this.creds        = new Map();
+    this.blacklist    = new Set();
+    this.challenges   = new Map();
+  }
+
+  registerDrone(id, cred) { this.creds.set(id, cred); }
+
+  distributeShares(ids) {
+    const n = ids.length;
+    if (n < this.k) { Log.append(`SSS  warn  n=${n} < k=${this.k}  cannot redist`, 'lw'); return; }
+    const all = SSS.generate(this.masterSecret, this.k, n);
+    this.shares.clear();
+    ids.forEach((id, i) => this.shares.set(id, all[i]));
+    Log.append('sep');
+    Log.append(`── SHARE DISTRIBUTION  n=${n}  k=${this.k} ──`, 'ls');
+    ids.forEach((id, i) => {
+      const [x, y] = all[i];
+      Log.append(`SHARE  D${id}  x=${x}  y=${y.toString().slice(0,14)}…`, 'lk');
+    });
+    Log.append(`SSS  dist_ok  ${n} shares issued`, 'lok');
+  }
+
+  reconstructSecret(selectedIds) {
+    const chosen = selectedIds
+      .filter(id => this.shares.has(id))
+      .slice(0, this.k)
+      .map(id => this.shares.get(id));
+    if (chosen.length < this.k) return null;
+    return SSS.reconstruct(chosen);
+  }
+
+  genChallenge(droneId, nonce, secret) {
+    const ch = hashStr(`${secret}${droneId}${nonce}`);
+    this.challenges.set(droneId, ch);
+    return ch;
+  }
+
+  verifyResponse(droneId, response, cred) {
+    if (!this.challenges.has(droneId)) return [false, 'no_pending_challenge'];
+    const ch = this.challenges.get(droneId);
+    if (!cred.verify(ch, response))    return [false, 'sig_mismatch'];
+    this.challenges.delete(droneId);
+    return [true, 'verified'];
+  }
+
+  blacklistDrone(id, reason) {
+    this.blacklist.add(id);
+    Log.append(`BL  add  D${id}  reason=${reason}`, 'lf');
+  }
+}
+
+
+/* ─── 6-STEP AUTHENTICATION ─── */
+function authenticate(auth, joiningId, cred, existingIds, attackType = null) {
+  const cert = cred.certificate;
+
+  Log.append('sep');
+  Log.append(`── AUTH  D${joiningId}  atk=${attackType||'none'} ──`, 'ls');
+  Log.append(`CERT  issuer=${cert.issuer}  legit=${cert.isLegitimate}`, 'li');
+  Log.append(`KEY   pub=${cert.publicKey.slice(0,16)}…  priv=${cred.privateKey.slice(0,8)}…`, 'lk');
+
+  /* Step 1 — Blacklist */
+  if (auth.blacklist.has(joiningId)) {
+    Log.append(`S1  BL_CHECK  D${joiningId}  FAIL  drone_blacklisted`, 'lf');
+    return [false, 'blacklisted'];
+  }
+  Log.append(`S1  BL_CHECK  D${joiningId}  PASS`, 'lok');
+
+  /* Step 2a — Issuer */
+  if (attackType === 'tampered_cert') {
+    Log.append(`S2a ISSUER  got=${cert.issuer}  exp=SwarmCA  FAIL`, 'lf');
+    auth.blacklistDrone(joiningId, 'tampered_cert');
+    return [false, 'cert_issuer_mismatch'];
+  }
+  Log.append(`S2a ISSUER  ${cert.issuer}  PASS`, 'lok');
+
+  /* Step 2b — Expiry */
+  const exp = new Date(cert.validUntil * 1000).toISOString().slice(0,10);
+  if (attackType === 'expired_cert') {
+    Log.append(`S2b EXPIRY  ${exp}  FAIL  expired`, 'lf');
+    auth.blacklistDrone(joiningId, 'expired_cert');
+    return [false, 'cert_expired'];
+  }
+  Log.append(`S2b EXPIRY  ${exp}  PASS`, 'lok');
+
+  /* Step 2c — Legitimacy */
+  if (!cert.isLegitimate) {
+    Log.append(`S2c LEGIT  false  FAIL`, 'lf');
+    auth.blacklistDrone(joiningId, 'illegit_cert');
+    return [false, 'cert_not_legit'];
+  }
+  Log.append(`S2c LEGIT  true  PASS`, 'lok');
+
+  /* Step 3 — Select K drones */
+  const available = existingIds.filter(id => auth.shares.has(id));
+  if (available.length < auth.k) {
+    Log.append(`S3  PEER_SEL  avail=${available.length}  need=${auth.k}  FAIL`, 'lf');
+    return [false, 'insufficient_peers'];
+  }
+  const selected = [...available].sort(() => Math.random() - .5).slice(0, auth.k);
+  Log.append(`S3  PEER_SEL  peers=[${selected.join(',')}]  PASS`, 'lok');
+  selected.forEach(id => {
+    const [x, y] = auth.shares.get(id);
+    Log.append(`     D${id}  x=${x}  y=${y.toString().slice(0,12)}…`, 'ld');
+  });
+
+  /* Step 4 — Reconstruct */
+  const reconstructed = auth.reconstructSecret(selected);
+  if (reconstructed === null) {
+    Log.append(`S4  LAGRANGE  FAIL  reconstruct_err`, 'lf');
+    return [false, 'reconstruct_failed'];
+  }
+  Log.append(`S4  LAGRANGE  secret=${reconstructed.toString().slice(0,14)}…  PASS`, 'lok');
+
+  /* Step 5 — Challenge */
+  const nonce = randHex(8);
+  const challenge = auth.genChallenge(joiningId, nonce, reconstructed.toString());
+  Log.append(`S5  CHALLENGE  nonce=${nonce}  chal=${challenge.slice(0,12)}…  sent`, 'ld');
+
+  /* Step 6 — Verify */
+  if (attackType === 'invalid_signature') {
+    Log.append(`S6  SIG_VERIFY  D${joiningId}  FAIL  sig_mismatch`, 'lf');
+    auth.blacklistDrone(joiningId, 'invalid_signature');
+    return [false, 'sig_mismatch'];
+  }
+  const response = cred.sign(challenge);
+  const [ok, msg] = auth.verifyResponse(joiningId, response, cred);
+  if (!ok) {
+    Log.append(`S6  SIG_VERIFY  D${joiningId}  FAIL  ${msg}`, 'lf');
+    auth.blacklistDrone(joiningId, msg);
+    return [false, msg];
+  }
+  Log.append(`S6  SIG_VERIFY  D${joiningId}  resp=${response.slice(0,12)}…  PASS`, 'lok');
+  Log.append(`AUTH_OK  D${joiningId}  approved  joining_swarm`, 'lok');
+  return [true, 'authenticated'];
+}
+
+
+/* ─── THREE.JS SETUP ─── */
+const canvas   = document.getElementById('c');
+const vpEl     = document.getElementById('vp');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearColor(0x04080d, 1);
+renderer.shadowMap.enabled = true;
+
+const scene  = new THREE.Scene();
+scene.fog    = new THREE.FogExp2(0x04080d, 0.007);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 800);
+
+scene.add(new THREE.AmbientLight(0x203050, 1.8));
+const sun = new THREE.DirectionalLight(0x4488cc, 1.2);
+sun.position.set(60, 90, 40); sun.castShadow = true; scene.add(sun);
+const fill = new THREE.DirectionalLight(0x002233, 0.5);
+fill.position.set(-40, 20, -30); scene.add(fill);
+const ptop = new THREE.PointLight(0x00ff88, 0.4, 120);
+ptop.position.set(0, 60, 0); scene.add(ptop);
+
+const gnd = new THREE.Mesh(
+  new THREE.PlaneGeometry(250,250),
+  new THREE.MeshLambertMaterial({ color: 0x080f18 })
+);
+gnd.rotation.x = -Math.PI/2; gnd.receiveShadow = true; scene.add(gnd);
+
+(function makeGrid(){
+  const mat = new THREE.LineBasicMaterial({ color:0x112233, opacity:.55, transparent:true });
+  for (let i = -6; i <= 6; i++) {
+    const g1 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i*10,.05,-60),new THREE.Vector3(i*10,.05,60)]);
+    const g2 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-60,.05,i*10),new THREE.Vector3(60,.05,i*10)]);
+    scene.add(new THREE.Line(g1,mat)); scene.add(new THREE.Line(g2,mat));
+  }
+})();
+
+[
+  [-8,-5,6,6,35,0x445566],[0,-6,8,8,40,0x667799],[8,-4,5,5,30,0x556677],
+  [-10,4,5,5,18,0x887766],[6,5,4,4,12,0x778866],
+].forEach(([ox,oy,w,d,h,c])=>{
+  const geo = new THREE.BoxGeometry(w,h,d);
+  const mat = new THREE.MeshLambertMaterial({ color:c, emissive:c, emissiveIntensity:.06 });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(ox, h/2, oy); m.castShadow = true; scene.add(m);
+  const em = new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({ color:0x2a4a66, opacity:.45, transparent:true }));
+  em.position.copy(m.position); scene.add(em);
+  const rl = new THREE.PointLight(0x334466, .3, 20); rl.position.set(ox, h+1, oy); scene.add(rl);
+});
+
+const baseMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(7,0.7,7),
+  new THREE.MeshLambertMaterial({ color:0x003388, emissive:0x0055ff, emissiveIntensity:.35 })
+);
+baseMesh.position.set(50,.35,0); scene.add(baseMesh);
+const baseRing = new THREE.Mesh(
+  new THREE.RingGeometry(4,5.5,32),
+  new THREE.MeshBasicMaterial({ color:0x0088ff, side:THREE.DoubleSide, transparent:true, opacity:.45 })
+);
+baseRing.rotation.x = -Math.PI/2; baseRing.position.set(50,.7,0); scene.add(baseRing);
+const baseLightPt = new THREE.PointLight(0x0099ff, 1, 30);
+baseLightPt.position.set(50, 3, 0); scene.add(baseLightPt);
+
+let orbitRing = null;
+function setOrbitRing(r) {
+  if (orbitRing) scene.remove(orbitRing);
+  const pts = [];
+  for (let i = 0; i <= 80; i++) {
+    const a = (i/80)*Math.PI*2;
+    pts.push(new THREE.Vector3(Math.cos(a)*r, 0, Math.sin(a)*r));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  orbitRing = new THREE.Line(geo, new THREE.LineBasicMaterial({ color:0x003322, opacity:.5, transparent:true }));
+  orbitRing.position.y = DRONE_ALT; scene.add(orbitRing);
+}
+
+
+/* ─── SIM CONSTANTS ─── */
+const BUILD_R   = 15;
+const MARGIN    = 15;
+const D_SAFE    = 8;
+const DRONE_ALT = 45;
+const BASE_X    = 50, BASE_Y = 0;
+
+/* Repulsion tuning */
+const REPEL_R   = 10;   // start pushing if closer than this
+const REPEL_F   = 18;   // max force magnitude (units/s)
+
+function wrap(a)    { return ((a + Math.PI) % (2*Math.PI)) - Math.PI; }
+function p2w(r, th) { return [r*Math.cos(th), r*Math.sin(th)]; }
+
+
+/* ─── DRONE CLASS ─── */
+const COL = { normal:0x00ff88, leader:0xffcc00, fake:0xff2244, newJoin:0x44ffaa };
+
+let drones  = new Map();
+let fakeBin = [];
+let nextId  = 6;
+let fakeId  = 1000;
+
+function spawnDrone(id, r, th, isFake=false, atBase=false) {
+  const [wx, wz] = atBase ? [BASE_X, BASE_Y] : p2w(r, th);
+  const col  = isFake ? COL.fake : COL.normal;
+  const geo  = new THREE.SphereGeometry(.85, 14, 9);
+  const mat  = new THREE.MeshLambertMaterial({ color:col, emissive:col, emissiveIntensity:.5 });
+  const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = true;
+  mesh.position.set(wx, DRONE_ALT, wz);
+  const light = new THREE.PointLight(col, .7, 10); mesh.add(light);
+  scene.add(mesh);
+  return {
+    id, r, th, x:wx, z:wz, y:DRONE_ALT,
+    rT:r, thT:th,
+    mode: atBase ? 'AT_BASE' : 'ORBIT',
+    battery: 65 + Math.random()*35,
+    drain: .25 + Math.random()*.35,
+    speed:8, omega:.28, kR:.8, kTh:1.2,
+    mesh, isFake, rejected:false, rejT:null
+  };
+}
+
+function setColor(d, hex) {
+  d.mesh.material.color.setHex(hex);
+  d.mesh.material.emissive.setHex(hex);
+  if (d.mesh.children[0]) d.mesh.children[0].color.setHex(hex);
+}
+
+function stepDrone(d, dt) {
+  if (d.battery > 0) { d.battery -= d.drain*dt; if (d.battery<0) d.battery=0; }
+  if (d.mode === 'REJECTED') {
+    d.y -= 6*dt; if (d.y<0) d.y=0;
+    d.mesh.position.y = d.y;
+    d.mesh.material.opacity = Math.max(0, d.y/(DRONE_ALT+5));
+    d.mesh.material.transparent = true; return;
+  }
+  if (d.mode === 'ORBIT') {
+    d.r  += d.kR*(d.rT-d.r)*dt;
+    d.th  = wrap(d.th + d.omega*dt);
+    const [wx,wz] = p2w(d.r, d.th); d.x=wx; d.z=wz; d.y=DRONE_ALT;
+    d.mesh.position.set(d.x, d.y, d.z);
+  } else if (d.mode === 'RECALIB') {
+    const eR  = d.rT-d.r;
+    const eTh = wrap(d.thT-d.th);
+    d.r  += Math.max(-4, Math.min(4, d.kR*eR))*dt;
+    d.th  = wrap(d.th + Math.max(-.6, Math.min(.6, d.kTh*eTh))*dt);
+    const [wx,wz] = p2w(d.r, d.th); d.x=wx; d.z=wz; d.y=DRONE_ALT;
+    d.mesh.position.set(d.x, d.y, d.z);
+    if (Math.abs(eR)<.1 && Math.abs(eTh)<.05) d.mode='ORBIT';
+  } else if (d.mode==='TO_BASE'||d.mode==='FROM_BASE') {
+    let tx, tz, ty=DRONE_ALT;
+    if (d.mode==='TO_BASE') { tx=BASE_X; tz=BASE_Y; }
+    else { [tx,tz]=p2w(d.rT,d.thT); }
+    const dx=tx-d.x, dz=tz-d.z, dy=ty-d.y;
+    const dist=Math.sqrt(dx*dx+dz*dz+dy*dy);
+    if (dist<.3) {
+      d.x=tx; d.z=tz; d.y=ty;
+      d.mode = d.mode==='TO_BASE' ? 'AT_BASE' : 'ORBIT';
+      if (d.mode==='ORBIT') { d.r=d.rT; d.th=d.thT; }
+      d.mesh.position.set(d.x,d.y,d.z);
+    } else {
+      const s=Math.min(d.speed*dt, dist);
+      d.x+=dx/dist*s; d.z+=dz/dist*s; d.y+=dy/dist*s;
+      d.mesh.position.set(d.x,d.y,d.z);
+    }
+  } else if (d.mode==='AT_BASE') {
+    d.x=BASE_X; d.z=BASE_Y; d.y=DRONE_ALT;
+    d.mesh.position.set(d.x,d.y,d.z);
+  }
+}
+
+/* ─── COLLISION AVOIDANCE (pairwise repulsion) ─── */
+function applyRepulsion(dt) {
+  const arr = [...drones.values()];
+  for (let i = 0; i < arr.length; i++) {
+    for (let j = i+1; j < arr.length; j++) {
+      const a = arr[i], b = arr[j];
+      // skip falling/base drones — don't need repulsion there
+      if (a.mode === 'REJECTED' || b.mode === 'REJECTED') continue;
+      if (a.mode === 'AT_BASE'  || b.mode === 'AT_BASE')  continue;
+      const dx = a.x - b.x;
+      const dz = a.z - b.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      if (dist < REPEL_R && dist > 0.01) {
+        // strength ramps up as drones get closer
+        const strength = REPEL_F * (1 - dist/REPEL_R) * dt;
+        const nx = dx/dist, nz = dz/dist;
+        a.x += nx*strength; a.z += nz*strength;
+        b.x -= nx*strength; b.z -= nz*strength;
+        // sync mesh positions
+        a.mesh.position.x = a.x; a.mesh.position.z = a.z;
+        b.mesh.position.x = b.x; b.mesh.position.z = b.z;
+        // also nudge their r/th so orbit controller doesn't pull them back instantly
+        const ar = Math.sqrt(a.x*a.x + a.z*a.z);
+        a.r = ar; a.th = Math.atan2(a.z, a.x);
+        const br = Math.sqrt(b.x*b.x + b.z*b.z);
+        b.r = br; b.th = Math.atan2(b.z, b.x);
+      }
+    }
+  }
+}
+
+
+/* ─── SWARM / AUTH ─── */
+const auth     = new ShamirAuthModule(3);
+let leaderId   = null;
+let rCurrent   = BUILD_R + MARGIN;
+const atkTypes  = ['invalid_signature','expired_cert','tampered_cert'];
+const atkLabels = ['INVALID_SIG','EXPIRED_CERT','TAMPERED_CERT'];
+let atkIdx      = 0;
+
+for (let i = 0; i < 5; i++) {
+  const th = (2*Math.PI*i)/5;
+  const r  = BUILD_R + 25;
+  const d  = spawnDrone(i+1, r, th, false, false);
+  drones.set(i+1, d);
+  auth.registerDrone(i+1, new DroneCredentials(i+1, true));
+}
+auth.distributeShares([...drones.keys()]);
+
+function recomputeFormation() {
+  const ids = [...drones.keys()].sort((a,b)=>a-b);
+  const N = ids.length; if (!N) return;
+  const rB = BUILD_R + MARGIN;
+  const rS = N>1 ? D_SAFE/(2*Math.sin(Math.PI/N)) : rB;
+  rCurrent = Math.max(rB, rS);
+  ids.forEach((id,i) => {
+    const d = drones.get(id);
+    d.rT = rCurrent; d.thT = wrap((2*Math.PI*i)/N); d.mode = 'RECALIB';
+  });
+  setOrbitRing(rCurrent);
+}
+
+function electLeader() {
+  if (!drones.size) { leaderId=null; return; }
+  let best=-1, bestId=null;
+  drones.forEach((d,id)=>{ if(d.battery>best){best=d.battery;bestId=id;} });
+  leaderId = bestId;
+  drones.forEach((d,id) => setColor(d, id===leaderId ? COL.leader : COL.normal));
+  Log.append(`ELECT  leader=D${leaderId}  bat=${best.toFixed(1)}%`, 'ld');
+  updateHUD();
+}
+
+function removeAtBase() {
+  const gone = [];
+  drones.forEach((d,id) => { if(d.mode==='AT_BASE') gone.push(id); });
+  gone.forEach(id => {
+    const d = drones.get(id);
+    scene.remove(d.mesh);
+    drones.delete(id);
+    if (auth.shares.has(id)) auth.shares.delete(id);
+    Log.append(`LEAVE  D${id}  share_revoked  peers=${drones.size}`, 'ld');
+    if (id===leaderId) Log.append(`ELECT  leader_left  re-electing`, 'lw');
+    auth.distributeShares([...drones.keys()]);
+    recomputeFormation();
+    electLeader();
+    updateHUD();
+  });
+}
+
+function cleanFakes() {
+  fakeBin = fakeBin.filter(f => {
+    if (f.y<=0 && (Date.now()-f.rejT)>3000) { scene.remove(f.mesh); return false; }
+    return true;
+  });
+}
+
+function updateHUD() {
+  document.getElementById('hDrones').textContent    = drones.size;
+  document.getElementById('hLeader').textContent    = leaderId ? `D${leaderId}` : '—';
+  document.getElementById('hBlacklist').textContent = auth.blacklist.size;
+}
+
+recomputeFormation();
+electLeader();
+
+Log.append('sep');
+Log.append(`── BOOT ──`, 'ls');
+Log.append(`INIT  swarm=5  sss_k=3  prime=2^127-1`, 'lok');
+Log.append(`INIT  leader_elected=D${leaderId}`, 'lok');
+Log.append(`INIT  shares_distributed  ok`, 'lok');
+
+
+/* ─── UI ACTIONS ─── */
+const UI = {
+  addReal() {
+    if (drones.size >= 8) { Log.append(`JOIN  FAIL  capacity=8  full`, 'lf'); return; }
+    const id   = nextId++;
+    const cred = new DroneCredentials(id, true);
+    Log.append('sep');
+    Log.append(`── JOIN REQUEST  D${id} ──`, 'ls');
+    const [ok] = authenticate(auth, id, cred, [...drones.keys()], null);
+    if (ok) {
+      const th = (2*Math.PI*drones.size)/(drones.size+1);
+      const d  = spawnDrone(id, rCurrent, th, false, true);
+      setColor(d, COL.newJoin);
+      d.rT=rCurrent; d.thT=th; d.mode='FROM_BASE';
+      drones.set(id, d);
+      auth.registerDrone(id, cred);
+      auth.distributeShares([...drones.keys()]);
+      recomputeFormation();
+      updateHUD();
+    }
+  },
+
+  addFake() {
+    const id  = fakeId++;
+    const atk = atkTypes[atkIdx];
+    const cred = new DroneCredentials(id, false);
+    Log.append('sep');
+    Log.append(`── ATTACK  D${id}  type=${atk} ──`, 'ls');
+    const [wx,wz] = p2w(rCurrent+15, Math.random()*Math.PI*2);
+    const geo  = new THREE.SphereGeometry(.85,14,9);
+    const mat  = new THREE.MeshLambertMaterial({ color:COL.fake, emissive:COL.fake, emissiveIntensity:.5 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const pl   = new THREE.PointLight(COL.fake,.7,10); mesh.add(pl);
+    mesh.castShadow = true;
+    mesh.position.set(wx, DRONE_ALT+6, wz);
+    scene.add(mesh);
+    const fake = { id, x:wx, z:wz, y:DRONE_ALT+6, mesh, mode:'REJECTED', rejected:true, rejT:Date.now(), isFake:true };
+    authenticate(auth, id, cred, [...drones.keys()], atk);
+    Log.append(`BLOCK  D${id}  bl_size=${auth.blacklist.size}`, 'lf');
+    fakeBin.push(fake);
+    updateHUD();
+  },
+
+  cycleAttack() {
+    atkIdx = (atkIdx+1) % atkTypes.length;
+    document.getElementById('atkLabel').textContent = atkLabels[atkIdx];
+    Log.append('sep');
+    Log.append(`── ATTACK TYPE CHANGED ──`, 'ls');
+    const desc = {
+      invalid_signature: 'wrong_privkey  fails S6 sig_verify',
+      expired_cert:      'cert_past_expiry  fails S2b',
+      tampered_cert:     'bad_issuer  fails S2a',
+    };
+    Log.append(`ATK  mode=${atkTypes[atkIdx]}  ${desc[atkTypes[atkIdx]]}`, 'lw');
+  },
+
+  removeDrone() {
+    if (!drones.size) return;
+    const ids  = [...drones.keys()];
+    const fol  = ids.filter(id=>id!==leaderId);
+    const rid  = fol.length ? Math.max(...fol) : Math.max(...ids);
+    Log.append('sep');
+    Log.append(`── LEAVE  D${rid} ──`, 'ls');
+    Log.append(`LEAVE  D${rid}  mode=TO_BASE`, 'ld');
+    drones.get(rid).mode = 'TO_BASE';
+  }
+};
+
+
+/* ─── CAMERA CONTROLS ─── */
+let camTh=.6, camPh=.55, camR=110;
+let drag=false, mx0=0, my0=0;
+vpEl.addEventListener('mousedown',e=>{drag=true;mx0=e.clientX;my0=e.clientY;});
+window.addEventListener('mouseup',()=>drag=false);
+window.addEventListener('mousemove',e=>{
+  if(!drag) return;
+  camTh-=(e.clientX-mx0)*.005; camPh=Math.max(.08,Math.min(Math.PI/2-.05,camPh-(e.clientY-my0)*.005));
+  mx0=e.clientX; my0=e.clientY;
+});
+vpEl.addEventListener('wheel',e=>{ camR=Math.max(30,Math.min(250,camR+e.deltaY*.12)); });
+vpEl.addEventListener('touchstart',e=>{drag=true;mx0=e.touches[0].clientX;my0=e.touches[0].clientY;},{passive:true});
+vpEl.addEventListener('touchend',()=>drag=false);
+vpEl.addEventListener('touchmove',e=>{
+  if(!drag) return;
+  camTh-=(e.touches[0].clientX-mx0)*.005; camPh=Math.max(.08,Math.min(Math.PI/2-.05,camPh-(e.touches[0].clientY-my0)*.005));
+  mx0=e.touches[0].clientX; my0=e.touches[0].clientY;
+},{passive:true});
+
+
+/* ─── RESIZE ─── */
+function resize(){
+  const r=vpEl.getBoundingClientRect();
+  renderer.setSize(r.width,r.height,false);
+  camera.aspect=r.width/r.height; camera.updateProjectionMatrix();
+}
+resize(); window.addEventListener('resize',resize);
+
+
+/* ─── ANIMATION LOOP ─── */
+let prevT=performance.now(), elTimer=0, simT=0;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const now=performance.now();
+  const dt=Math.min((now-prevT)/1000,.05); prevT=now; simT+=dt;
+
+  const cx=camR*Math.cos(camTh)*Math.sin(camPh)+5;
+  const cy=camR*Math.cos(camPh);
+  const cz=camR*Math.sin(camTh)*Math.sin(camPh);
+  camera.position.set(cx,cy,cz); camera.lookAt(0,18,0);
+
+  drones.forEach(d=>stepDrone(d,dt));
+
+  /* ── Collision avoidance — after individual step, before render ── */
+  applyRepulsion(dt);
+
+  if (leaderId && drones.has(leaderId)) {
+    const ld=drones.get(leaderId);
+    ld.mesh.position.y = DRONE_ALT + Math.sin(simT*2.2)*.4;
+  }
+
+  fakeBin.forEach(f=>{
+    f.y-=6*dt; if(f.y<0) f.y=0;
+    f.mesh.position.y=f.y;
+    const t=Math.max(0,f.y/(DRONE_ALT+6));
+    f.mesh.material.opacity=t; f.mesh.material.transparent=true;
+  });
+
+  removeAtBase(); cleanFakes();
+  elTimer+=dt; if(elTimer>12){elTimer=0;electLeader();}
+
+  baseRing.material.opacity=.3+.2*Math.sin(simT*3);
+  baseRing.rotation.z+=.008;
+  baseLightPt.intensity=.7+.4*Math.sin(simT*2.8);
+
+  renderer.render(scene,camera);
+}
+
+animate();
+</script>
+</body>
+</html>
