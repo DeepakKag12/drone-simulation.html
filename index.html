@@ -795,7 +795,7 @@ Log.append(`INIT  shares_distributed  ok`, 'lok');
 /* ─── UI ACTIONS ─── */
 const UI = {
   addReal() {
-    if (drones.size >= 8) { Log.append(`JOIN  FAIL  capacity=8  full`, 'lf'); return; }
+    if (drones.size >= 20) { Log.append(`JOIN  FAIL  capacity=15  full`, 'lf'); return; }
     const id   = nextId++;
     const cred = new DroneCredentials(id, true);
     Log.append('sep');
