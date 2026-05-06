@@ -181,6 +181,7 @@ body::before{
     <div class="si"><div class="dot"></div><span>LIVE</span></div>
     <div class="si"><span>SWARM:</span><span class="sv" id="hDrones">5</span></div>
     <div class="si"><span>LEADER:</span><span class="sv" id="hLeader">—</span></div>
+    <div class="si"><span>BATTERY:</span><span class="sv" id="hBattery" style="color:var(--green)">100%</span></div>
     <div class="si"><span>BLACKLIST:</span><span class="sv" id="hBlacklist" style="color:var(--red)">0</span></div>
     <div class="si"><span>AUTH:</span><span class="sv" style="color:var(--green)">SSS K=3</span></div>
     <div class="si"><span>PRIME:</span><span class="sv" style="color:var(--purple);font-size:9px">2¹²⁷−1</span></div>
@@ -617,15 +618,16 @@ function spawnDrone(id, r, th, isFake=false, atBase=false) {
   const geo  = new THREE.SphereGeometry(.85, 14, 9);
   const mat  = new THREE.MeshLambertMaterial({ color:col, emissive:col, emissiveIntensity:.5 });
   const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = true;
-  mesh.position.set(wx, DRONE_ALT, wz);
+  const initY = atBase ? 2 : DRONE_ALT;
+  mesh.position.set(wx, initY, wz);
   const light = new THREE.PointLight(col, .7, 10); mesh.add(light);
   scene.add(mesh);
   return {
-    id, r, th, x:wx, z:wz, y:DRONE_ALT,
+    id, r, th, x:wx, z:wz, y:initY,
     rT:r, thT:th,
     mode: atBase ? 'AT_BASE' : 'ORBIT',
-    battery: 65 + Math.random()*35,
-    drain: .25 + Math.random()*.35,
+    battery: 100,
+    drain: 2.5 + Math.random()*2.0,
     speed:8, omega:.28, kR:.8, kTh:1.2,
     mesh, isFake, rejected:false, rejT:null
   };
@@ -638,7 +640,11 @@ function setColor(d, hex) {
 }
 
 function stepDrone(d, dt) {
-  if (d.battery > 0) { d.battery -= d.drain*dt; if (d.battery<0) d.battery=0; }
+  // Only drain battery for the LEADER drone
+  if (d.battery > 0 && d.id === leaderId) { 
+    d.battery -= d.drain*dt; 
+    if (d.battery<0) d.battery=0; 
+  }
   if (d.mode === 'REJECTED') {
     d.y -= 6*dt; if (d.y<0) d.y=0;
     d.mesh.position.y = d.y;
@@ -660,7 +666,7 @@ function stepDrone(d, dt) {
     if (Math.abs(eR)<.1 && Math.abs(eTh)<.05) d.mode='ORBIT';
   } else if (d.mode==='TO_BASE'||d.mode==='FROM_BASE') {
     let tx, tz, ty=DRONE_ALT;
-    if (d.mode==='TO_BASE') { tx=BASE_X; tz=BASE_Y; }
+    if (d.mode==='TO_BASE') { tx=BASE_X; tz=BASE_Y; ty=1; }
     else { [tx,tz]=p2w(d.rT,d.thT); }
     const dx=tx-d.x, dz=tz-d.z, dy=ty-d.y;
     const dist=Math.sqrt(dx*dx+dz*dz+dy*dy);
@@ -675,7 +681,7 @@ function stepDrone(d, dt) {
       d.mesh.position.set(d.x,d.y,d.z);
     }
   } else if (d.mode==='AT_BASE') {
-    d.x=BASE_X; d.z=BASE_Y; d.y=DRONE_ALT;
+    d.x=BASE_X; d.z=BASE_Y; d.y=2;
     d.mesh.position.set(d.x,d.y,d.z);
   }
 }
@@ -715,10 +721,12 @@ function applyRepulsion(dt) {
 /* ─── SWARM / AUTH ─── */
 const auth     = new ShamirAuthModule(3);
 let leaderId   = null;
+let prevLeaderId = null;
 let rCurrent   = BUILD_R + MARGIN;
 const atkTypes  = ['invalid_signature','expired_cert','tampered_cert'];
 const atkLabels = ['INVALID_SIG','EXPIRED_CERT','TAMPERED_CERT'];
 let atkIdx      = 0;
+let autoJoinInProgress = false;
 
 for (let i = 0; i < 5; i++) {
   const th = (2*Math.PI*i)/5;
@@ -737,36 +745,117 @@ function recomputeFormation() {
   rCurrent = Math.max(rB, rS);
   ids.forEach((id,i) => {
     const d = drones.get(id);
+    // Skip drones transitioning to/from base
+    if (d.mode === 'FROM_BASE' || d.mode === 'TO_BASE' || d.mode === 'AT_BASE') return;
     d.rT = rCurrent; d.thT = wrap((2*Math.PI*i)/N); d.mode = 'RECALIB';
   });
   setOrbitRing(rCurrent);
 }
 
 function electLeader() {
-  if (!drones.size) { leaderId=null; return; }
+  // If current leader still exists and is in swarm (not going to base), keep it as leader
+  if (leaderId && drones.has(leaderId) && drones.get(leaderId).mode !== 'TO_BASE' && drones.get(leaderId).mode !== 'AT_BASE') {
+    drones.forEach((d,id) => setColor(d, id===leaderId ? COL.leader : COL.normal));
+    updateHUD();
+    return;
+  }
+  
+  // Current leader is gone or going to base, elect new leader from remaining
+  if (!drones.size) { leaderId=null; prevLeaderId=null; return; }
   let best=-1, bestId=null;
-  drones.forEach((d,id)=>{ if(d.battery>best){best=d.battery;bestId=id;} });
-  leaderId = bestId;
-  drones.forEach((d,id) => setColor(d, id===leaderId ? COL.leader : COL.normal));
-  Log.append(`ELECT  leader=D${leaderId}  bat=${best.toFixed(1)}%`, 'ld');
-  updateHUD();
+  drones.forEach((d,id)=>{ 
+    // Only consider drones still in swarm for leadership
+    if (d.mode !== 'TO_BASE' && d.mode !== 'AT_BASE' && d.battery>best) {
+      best=d.battery;
+      bestId=id;
+    }
+  });
+  
+  // Only log and update if leader changed
+  if (bestId !== prevLeaderId) {
+    leaderId = bestId;
+    prevLeaderId = leaderId;
+    drones.forEach((d,id) => setColor(d, id===leaderId ? COL.leader : COL.normal));
+    if (leaderId && drones.has(leaderId)) {
+      drones.get(leaderId).battery = 100;
+      Log.append(`ELECT  leader=D${leaderId}  bat=100.0%  remaining_peers=${drones.size-1}`, 'ld');
+    }
+    updateHUD();
+  }
 }
 
 function removeAtBase() {
   const gone = [];
   drones.forEach((d,id) => { if(d.mode==='AT_BASE') gone.push(id); });
+  
+  if (gone.length === 0) return; // No drones to remove
+  
   gone.forEach(id => {
     const d = drones.get(id);
     scene.remove(d.mesh);
     drones.delete(id);
     if (auth.shares.has(id)) auth.shares.delete(id);
+    if (id===leaderId) { 
+      Log.append(`LEAVE  D${id}  leader_left  re-electing`, 'lw');
+      prevLeaderId = null;
+    }
     Log.append(`LEAVE  D${id}  share_revoked  peers=${drones.size}`, 'ld');
-    if (id===leaderId) Log.append(`ELECT  leader_left  re-electing`, 'lw');
-    auth.distributeShares([...drones.keys()]);
+    if (drones.size >= 4) {
+      auth.distributeShares([...drones.keys()]);
+    }
     recomputeFormation();
-    electLeader();
+    if (drones.size > 0) electLeader();
     updateHUD();
   });
+  
+  // Add ONE replacement drone when any drone leaves (unless at max capacity or auto-join already in progress)
+  // MUST maintain 4-15 drones minimum
+  if (drones.size < 15 && !autoJoinInProgress) {
+    autoJoinInProgress = true;
+    setTimeout(() => {
+      if (drones.size < 15) addNewDroneAuto();
+      autoJoinInProgress = false;
+    }, 1500);
+  }
+}
+
+function checkZeroBattery() {
+  // Only check if LEADER battery hit 0%
+  if (leaderId && drones.has(leaderId)) {
+    const leader = drones.get(leaderId);
+    if (leader.battery <= 0 && leader.mode !== 'TO_BASE' && leader.mode !== 'AT_BASE') {
+      Log.append(`BATTERY  D${leaderId}  depleted=0%  leader_exhausted  mode=TO_BASE`, 'lw');
+      // ELECT NEW LEADER BEFORE OLD LEADER GOES TO BASE
+      prevLeaderId = null;  // Force leader election
+      electLeader();        // Elect new leader first
+      leader.mode = 'TO_BASE';  // Then send exhausted leader to base
+    }
+  }
+}
+
+function addNewDroneAuto() {
+  // Allow up to 15 drones maximum
+  if (drones.size >= 15) return;
+  // New drones can join to replace leaving drones
+  
+  const id   = nextId++;
+  const cred = new DroneCredentials(id, true);
+  Log.append('sep');
+  Log.append(`── AUTO-JOIN  D${id} ──`, 'ls');
+  const [ok] = authenticate(auth, id, cred, [...drones.keys()], null);
+  if (ok) {
+    const th = (2*Math.PI*drones.size)/(drones.size+1);
+    const d  = spawnDrone(id, rCurrent, th, false, true);
+    setColor(d, COL.newJoin);
+    d.rT=rCurrent; d.thT=th; d.mode='FROM_BASE';
+    Log.append(`LAUNCH  D${id}  replacement_drone  rising_from_base  target_altitude=${DRONE_ALT}m`, 'lok');
+    drones.set(id, d);
+    auth.registerDrone(id, cred);
+    auth.distributeShares([...drones.keys()]);
+    // Delay recompute formation to let new drone transition from base
+    setTimeout(() => recomputeFormation(), 3000);
+    updateHUD();
+  }
 }
 
 function cleanFakes() {
@@ -780,6 +869,11 @@ function updateHUD() {
   document.getElementById('hDrones').textContent    = drones.size;
   document.getElementById('hLeader').textContent    = leaderId ? `D${leaderId}` : '—';
   document.getElementById('hBlacklist').textContent = auth.blacklist.size;
+  // Update battery display
+  if (leaderId && drones.has(leaderId)) {
+    const bat = drones.get(leaderId).battery.toFixed(1);
+    document.getElementById('hBattery').textContent = bat + '%';
+  }
 }
 
 recomputeFormation();
@@ -787,9 +881,10 @@ electLeader();
 
 Log.append('sep');
 Log.append(`── BOOT ──`, 'ls');
-Log.append(`INIT  swarm=5  sss_k=3  prime=2^127-1`, 'lok');
+Log.append(`INIT  swarm=5  min_peers=3  max_peers=15  sss_k=3  prime=2^127-1`, 'lok');
 Log.append(`INIT  leader_elected=D${leaderId}`, 'lok');
 Log.append(`INIT  shares_distributed  ok`, 'lok');
+Log.append(`INIT  auto_join_enabled=true  base_station=active`, 'lok');
 
 
 /* ─── UI ACTIONS ─── */
@@ -908,10 +1003,25 @@ function animate(){
   /* ── Collision avoidance — after individual step, before render ── */
   applyRepulsion(dt);
 
+  /* ── Check for zero battery drones ── */
+  checkZeroBattery();
+
+  /* ── Log battery status periodically for leader ── */
+  if (Math.floor(simT * 3) % 3 === 0 && Math.floor((simT - dt) * 3) !== Math.floor(simT * 3)) {
+    if (leaderId && drones.has(leaderId)) {
+      const ld = drones.get(leaderId);
+      if (ld.battery > 0) {
+        Log.append(`BATTERY  D${leaderId}  level=${ld.battery.toFixed(1)}%  drain=${ld.drain.toFixed(2)}/s`, 'ld');
+      }
+    }
+  }
+
   if (leaderId && drones.has(leaderId)) {
     const ld=drones.get(leaderId);
     ld.mesh.position.y = DRONE_ALT + Math.sin(simT*2.2)*.4;
   }
+
+  updateHUD();
 
   fakeBin.forEach(f=>{
     f.y-=6*dt; if(f.y<0) f.y=0;
