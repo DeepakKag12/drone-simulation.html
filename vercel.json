@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "public": false,
+  "buildCommand": "echo 'Building drone simulation application'",
+  "outputDirectory": ".",
+  "env": {},
+  "regions": ["iad1"],
+  "functions": {
+    "**.html": {
+      "memory": 128,
+      "maxDuration": 60
+    }
+  },
+  "redirects": [
+    {
+      "source": "/old-path",
+      "destination": "/index.html",
+      "permanent": false
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "path": "/index.html",
+      "status": 200
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
