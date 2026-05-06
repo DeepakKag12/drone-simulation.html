@@ -3,8 +3,10 @@
   "public": false,
   "buildCommand": "echo 'Building drone simulation application'",
   "outputDirectory": ".",
-  "env": {},
   "regions": ["iad1"],
+  "env": {
+    "NODE_ENV": "production"
+  },
   "functions": {
     "**.html": {
       "memory": 128,
@@ -40,14 +42,5 @@
         }
       ]
     }
-  ],
-  "checks": [
-    {
-      "path": "/index.html",
-      "status": 200
-    }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 }
